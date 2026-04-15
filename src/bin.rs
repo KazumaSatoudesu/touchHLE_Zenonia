@@ -6,7 +6,13 @@
 // Allow the crate to have a non-snake-case name (touchHLE).
 // This also allows items in the crate to have non-snake-case names.
 #![allow(non_snake_case)]
-
 fn main() -> Result<(), String> {
-    touchHLE::main(std::env::args())
+    // Use a larger stack size to prevent stack overflows from deeply nested
+    // game callbacks (e.g. Zenonia 3's animation timer chain).
+    let args: Vec<String> = std::env::args().collect();
+    let builder = std::thread::Builder::new().stack_size(256 * 1024 * 1024);
+    let handler = builder.spawn(move || {
+        touchHLE::main(args.into_iter())
+    }).unwrap();
+    handler.join().unwrap()
 }

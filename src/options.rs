@@ -86,7 +86,7 @@ impl Default for Options {
             preferred_languages: None,
             headless: false,
             print_fps: false,
-            fps_limit: Some(60.0), // Original iPhone is 60Hz and uses v-sync,
+            fps_limit: Some(30.0), // Original iPhone is 60Hz and uses v-sync,
             force_composition: false,
             network_access: false,
             popup_errors: true,

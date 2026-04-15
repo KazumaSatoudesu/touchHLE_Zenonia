@@ -27,6 +27,8 @@ const kCFStreamStatusError: i32 = 5;
 struct CFReadStreamHostObject {
     path: String,
     file: Option<GuestFile>,
+    file_size: usize,   // total size of the file
+    bytes_read: usize,  // how many bytes read so far
 }
 
 impl HostObject for CFReadStreamHostObject {}
@@ -42,7 +44,12 @@ pub fn CFReadStreamCreateWithFile(
     let _keep_alive: id = msg![env; path_ns retain];
     let path = to_rust_string(env, path_ns);
 
-    let host_object = Box::new(CFReadStreamHostObject { path: path.to_string(), file: None });
+    let host_object = Box::new(CFReadStreamHostObject {
+        path: path.to_string(),
+        file: None,
+        file_size: 0,
+        bytes_read: 0,
+    });
 
     let class = env
         .objc
@@ -61,22 +68,28 @@ fn CFReadStreamOpen(env: &mut Environment, stream: CFReadStreamRef) -> bool {
         return true;
     }
     let path = host_obj.path.clone();
+
+    // Empty path = dummy stream, nothing to open
+    if path.is_empty() {
+        log!("CFReadStreamOpen: empty path, skipping");
+        return false;
+    }
+
+    // Get file size first
+    let file_size = match env.fs.read(crate::fs::GuestPath::new(&path)) {
+        Ok(bytes) => bytes.len(),
+        Err(()) => 0,
+    };
+
     let guest_path = crate::fs::GuestPath::new(&path);
     match env.fs.open(guest_path) {
         Ok(guest_file) => {
-            // Extract the underlying std::fs::File from GuestFile
-            match env.fs.open(guest_path) {
-				Ok(guest_file) => {
-				let host_obj = env.objc.borrow_mut::<CFReadStreamHostObject>(stream);
-				log!("CFReadStreamOpen('{}') => success", path);
-				host_obj.file = Some(guest_file);
-				true
-			}
-				Err(()) => {
-					log!("CFReadStreamOpen('{}') failed: not found in guest fs", path);
-					false
-				}
-			}
+            let host_obj = env.objc.borrow_mut::<CFReadStreamHostObject>(stream);
+            log!("CFReadStreamOpen('{}') => success, size={}", path, file_size);
+            host_obj.file = Some(guest_file);
+            host_obj.file_size = file_size;
+            host_obj.bytes_read = 0;
+            true
         }
         Err(()) => {
             log!("CFReadStreamOpen('{}') failed: not found in guest fs", path);
@@ -92,9 +105,15 @@ fn CFReadStreamRead(
     buffer_length: CFIndex,
 ) -> CFIndex {
     use std::io::Read;
-	log!("CFReadStreamRead called, stream={:?}, length={}", stream, buffer_length);
+    log!("CFReadStreamRead called, stream={:?}, length={}", stream, buffer_length);
     let buf_len: usize = buffer_length.try_into().unwrap();
     let host_obj = env.objc.borrow_mut::<CFReadStreamHostObject>(stream);
+
+    // Empty path = dummy stream, return EOF
+    if host_obj.path.is_empty() {
+        log!("CFReadStreamRead: empty path stream, returning EOF");
+        return 0;
+    }
 
     let Some(file) = host_obj.file.as_mut() else {
         log!("CFReadStreamRead: stream is not open");
@@ -105,11 +124,19 @@ fn CFReadStreamRead(
     let mut tmp = vec![0u8; buf_len];
     match file.read(&mut tmp) {
         Ok(n) => {
-			let dest = env.mem.bytes_at_mut(buffer, n.try_into().unwrap());
-			dest.copy_from_slice(&tmp[..n]);
-			log!("CFReadStreamRead: read {} bytes", n);
-			n as CFIndex
-		}
+            if n == 0 {
+                log!("CFReadStreamRead: EOF");
+                return 0;
+            }
+            let dest = env.mem.bytes_at_mut(buffer, n.try_into().unwrap());
+            dest.copy_from_slice(&tmp[..n]);
+            host_obj.bytes_read += n;
+            log!(
+                "CFReadStreamRead: read {} bytes ({}/{})",
+                n, host_obj.bytes_read, host_obj.file_size
+            );
+            n as CFIndex
+        }
         Err(e) => {
             log!("CFReadStreamRead error: {}", e);
             -1
@@ -121,6 +148,7 @@ fn CFReadStreamClose(env: &mut Environment, stream: CFReadStreamRef) {
     let host_obj = env.objc.borrow_mut::<CFReadStreamHostObject>(stream);
     log_dbg!("CFReadStreamClose('{}')", host_obj.path);
     host_obj.file = None;
+    host_obj.bytes_read = 0;
 }
 
 fn CFReadStreamGetStatus(env: &mut Environment, stream: CFReadStreamRef) -> i32 {
@@ -128,7 +156,7 @@ fn CFReadStreamGetStatus(env: &mut Environment, stream: CFReadStreamRef) -> i32 
     if host_obj.file.is_some() {
         kCFStreamStatusOpen
     } else {
-        kCFStreamStatusError
+        kCFStreamStatusNotOpen
     }
 }
 
@@ -151,22 +179,57 @@ fn CFReadStreamGetError(
 
 fn CFURLCreatePropertyFromResource(
     env: &mut Environment,
-    _url: id,
+    url: id,
     _property: id,
     _error_code: id,
 ) -> id {
-    // Return a non-zero file size so the caller proceeds normally.
-    // The actual size doesn't matter for Zenonia's usage.
-    log!("TODO: CFURLCreatePropertyFromResource - returning dummy size 4096");
-    let file_size: i32 = 16384;
+    log!("CFURLCreatePropertyFromResource CALLED url={:?}", url);
+    use crate::objc::nil;
+    if url == nil {
+        // Return a large default so the game can allocate a buffer big enough
+        // for any asset (Title.pzx is ~196KB so 256KB covers it safely).
+        log!("CFURLCreatePropertyFromResource: nil url, returning large default size (262144)");
+        let ns_number: id = msg_class![env; NSNumber numberWithInt:262144i32];
+        return msg![env; ns_number retain];
+    }
+    let path: id = msg![env; url path];
+    if path == nil {
+        log!("CFURLCreatePropertyFromResource: nil path, returning 0");
+        let ns_number: id = msg_class![env; NSNumber numberWithInt:0i32];
+        return msg![env; ns_number retain];
+    }
+    let path_str = to_rust_string(env, path);
+    let file_size: i32 = match env.fs.read(crate::fs::GuestPath::new(&*path_str)) {
+        Ok(bytes) => bytes.len() as i32,
+        Err(()) => {
+            log!("CFURLCreatePropertyFromResource: could not read {}", path_str);
+            0
+        }
+    };
+    log!("CFURLCreatePropertyFromResource: size={} for {}", file_size, path_str);
     let ns_number: id = msg_class![env; NSNumber numberWithInt:file_size];
     msg![env; ns_number retain]
 }
 
 fn CFReadStreamHasBytesAvailable(env: &mut Environment, stream: CFReadStreamRef) -> bool {
     let host_obj = env.objc.borrow::<CFReadStreamHostObject>(stream);
-    let available = host_obj.file.is_some();
-    log!("CFReadStreamHasBytesAvailable({:?}) -> {}", stream, available);
+
+    // Empty path = dummy stream, no bytes available
+    if host_obj.path.is_empty() {
+        log!("CFReadStreamHasBytesAvailable: empty path stream -> false");
+        return false;
+    }
+
+    if host_obj.file.is_none() {
+        log!("CFReadStreamHasBytesAvailable({:?}) -> false (not open)", stream);
+        return false;
+    }
+
+    let available = host_obj.bytes_read < host_obj.file_size;
+    log!(
+        "CFReadStreamHasBytesAvailable({:?}) -> {} ({}/{})",
+        stream, available, host_obj.bytes_read, host_obj.file_size
+    );
     available
 }
 
@@ -179,7 +242,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(CFReadStreamCopyProperty(_, _)),
     export_c_func!(CFReadStreamGetError(_)),
     export_c_func!(CFURLCreatePropertyFromResource(_, _, _)),
-	export_c_func!(CFReadStreamHasBytesAvailable(_)),
+    export_c_func!(CFReadStreamHasBytesAvailable(_)),
 ];
 
 /// The ObjC class backing CFReadStream objects.
@@ -195,6 +258,8 @@ pub const CLASSES: ClassExports = objc_classes! {
     let host_object = Box::new(CFReadStreamHostObject {
         path: String::new(),
         file: None,
+        file_size: 0,
+        bytes_read: 0,
     });
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }

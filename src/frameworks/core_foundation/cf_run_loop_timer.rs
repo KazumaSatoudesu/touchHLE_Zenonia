@@ -100,10 +100,40 @@ fn CFRunLoopTimerInvalidate(env: &mut Environment, timer: CFRunLoopTimerRef) {
     () = msg![env; timer invalidate];
 }
 
+fn CFRunLoopTimerIsValid(env: &mut Environment, timer: CFRunLoopTimerRef) -> bool {
+    // Return true if the timer object exists (hasn't been invalidated)
+    env.objc.get_host_object(timer).is_some()
+}
+
+fn CFRunLoopContainsTimer(
+    _env: &mut Environment,
+    _run_loop: id,
+    _timer: CFRunLoopTimerRef,
+    _mode: id,
+) -> bool {
+    // Stub: assume timer is always in the run loop
+    true
+}
+
+fn CFRunLoopRemoveTimer(
+    env: &mut Environment,
+    _run_loop: CFRunLoopTimerRef,
+    timer: CFRunLoopTimerRef,
+    _mode: id,
+) {
+    log!("CFRunLoopRemoveTimer: invalidating timer {:?}", timer);
+    if env.objc.get_host_object(timer).is_some() {
+        () = msg![env; timer invalidate];
+    }
+}
+
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(CFRunLoopTimerCreate(_, _, _, _, _, _, _)),
     export_c_func!(CFRunLoopAddTimer(_, _, _)),
     export_c_func!(CFRunLoopTimerInvalidate(_)),
+	export_c_func!(CFRunLoopTimerIsValid(_)),
+	export_c_func!(CFRunLoopContainsTimer(_, _, _)),
+	export_c_func!(CFRunLoopRemoveTimer(_, _, _)),
 ];
 
 /// Belongs to _touchHLE_CFTimerTarget
@@ -141,7 +171,15 @@ pub const CLASSES: ClassExports = objc_classes! {
         callout,
         info
     } = env.objc.borrow(this);
+    log!("CFRunLoopTimer firing callout at {:?} with info {:?}", callout.to_ptr(), info);
+    let callout_addr = callout.to_ptr().to_bits();
+    if env.framework_state.core_foundation.active_cf_timer_callout == callout_addr {
+        log!("CFRunLoopTimer: skipping re-entrant callout at {:#x}", callout_addr);
+        return;
+    }
+    env.framework_state.core_foundation.active_cf_timer_callout = callout_addr;
     () = callout.call_from_host(env, (timer, info));
+    env.framework_state.core_foundation.active_cf_timer_callout = 0;
 }
 
 @end

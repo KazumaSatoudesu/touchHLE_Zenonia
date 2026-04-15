@@ -45,6 +45,7 @@ pub mod uikit;
 pub struct State {
     audio_toolbox: audio_toolbox::State,
     core_animation: core_animation::State,
+    pub core_foundation: core_foundation::State,
     foundation: foundation::State,
     media_player: media_player::State,
     openal: openal::State,

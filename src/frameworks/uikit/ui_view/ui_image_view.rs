@@ -101,7 +101,15 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (())setAnimationDuration:(NSTimeInterval)duration { // NSArray<UIImage *>*
     todo_objc_setter!(this, duration);
 }
-
+/*
+- (())setAnimationRepeatCount:(i32)count {
+    log!(
+        "TODO: [(UIImageView*) {:?} setAnimationRepeatCount:{}]",
+        this,
+        count
+    );
+}
+*/
 - (())startAnimating {
     log!("TODO: [(UIImageView*) {:?} startAnimating]", this);
 }

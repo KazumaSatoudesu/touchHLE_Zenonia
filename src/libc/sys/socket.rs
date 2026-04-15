@@ -363,10 +363,12 @@ fn connect(
 ) -> i32 {
     // TODO: handle errno properly
     set_errno(env, 0);
-
+    if State::get(env).sockets.get(&socket).is_none() {
+        log!("connect: invalid socket fd {}, returning -1", socket);
+        return -1;
+    }
     let type_ = State::get(env).sockets.get(&socket).unwrap().type_;
     assert!(type_ == SOCK_STREAM);
-
     assert_eq!(address_len, guest_size_of::<sockaddr>());
     let sockaddr_val = env.mem.read(address);
     log_dbg!(
@@ -385,7 +387,13 @@ fn connect(
         .unwrap()
         .tcp_stream
         .is_none());
-    let host_stream = TcpStream::connect(socket_address).unwrap();
+    let host_stream = match TcpStream::connect(socket_address) {
+        Ok(stream) => stream,
+        Err(e) => {
+            log!("connect: connection failed: {}, returning -1", e);
+            return -1;
+        }
+    };
     // We set host socket as non-blocking in order to have
     // more control of how and when it's used
     host_stream.set_nonblocking(true).unwrap();
@@ -871,8 +879,17 @@ fn send(
 ) -> i32 {
     // TODO: handle errno properly
     set_errno(env, 0);
-
-    let type_ = State::get(env).sockets.get(&socket).unwrap().type_;
+/*
+    let type_ = match State::get(env).sockets.get(&socket) {
+    Some(sock) => sock.type_,
+    None => {
+        log!("WARNING: invalid socket fd {}", socket);
+        set_errno(env, 9); // EBADF = bad file descriptor
+        return -1;
+    }
+};
+*/
+	let type_ = State::get(env).sockets.get(&socket).unwrap().type_;
     assert!(type_ == SOCK_STREAM);
 
     assert_eq!(flags, 0); // TODO

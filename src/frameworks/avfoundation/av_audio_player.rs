@@ -48,6 +48,7 @@ struct AVAudioPlayerHostObject {
     volume: f32,
     is_playing: bool,
     num_of_loops: NSInteger,
+    buffers_at_eof: usize,
 }
 impl HostObject for AVAudioPlayerHostObject {}
 
@@ -76,7 +77,8 @@ pub const CLASSES: ClassExports = objc_classes! {
         set_current_time: 0.0,
         volume: 1.0,
         is_playing: false,
-        num_of_loops: 0
+        num_of_loops: 0,
+        buffers_at_eof: 0,
     });
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }
@@ -258,7 +260,8 @@ pub const CLASSES: ClassExports = objc_classes! {
         current_packet: 0,
         set_current_time: 0.0,
         volume: 1.0,
-        is_playing: false
+        is_playing: false,
+		buffers_at_eof: 0,
     };
 }
 
@@ -351,15 +354,7 @@ fn _touchHLE_AVAudioPlayerOutputBufferHelper(
     in_buf: AudioQueueBufferRef,
 ) {
     let av_audio_player: id = in_user_data.cast();
-    let class: Class = msg![env; av_audio_player class];
-    log_dbg!(
-        "_touchHLE_AVAudioPlayerOutputBufferHelper on object of class: {}",
-        env.objc.get_class_name(class)
-    );
-    assert_eq!(
-        class,
-        env.objc.get_known_class("AVAudioPlayer", &mut env.mem)
-    );
+    log_dbg!("_touchHLE_AVAudioPlayerOutputBufferHelper called");
 
     let &AVAudioPlayerHostObject {
         audio_file_id,
@@ -367,6 +362,7 @@ fn _touchHLE_AVAudioPlayerOutputBufferHelper(
         num_packets_to_read,
         current_packet,
         is_playing,
+		buffers_at_eof,
         ..
     } = env.objc.borrow(av_audio_player);
     let aq = audio_queue.unwrap();
@@ -396,6 +392,7 @@ fn _touchHLE_AVAudioPlayerOutputBufferHelper(
     env.mem.free(num_bytes_ptr.cast());
 
     if num_packets > 0 {
+		eprintln!("AVAudioPlayer buffer: current_packet={}, num_packets={}, status={}", current_packet, num_packets, status);
         assert!(status == 0 || status == eofErr);
         audio_queue_buffer.audio_data_byte_size = num_bytes;
         env.mem.write(in_buf, audio_queue_buffer);
@@ -422,10 +419,33 @@ fn _touchHLE_AVAudioPlayerOutputBufferHelper(
                     .borrow_mut::<AVAudioPlayerHostObject>(av_audio_player)
                     .num_of_loops -= 1;
             }
+            // Increment EOF counter
+			eprintln!("AVAudioPlayer EOF hit, buffers_at_eof={}, num_of_loops={}", buffers_at_eof, number_of_loops);
+            env.objc
+                .borrow_mut::<AVAudioPlayerHostObject>(av_audio_player)
+                .buffers_at_eof += 1;
+            let buffers_at_eof = env.objc
+                .borrow::<AVAudioPlayerHostObject>(av_audio_player)
+                .buffers_at_eof;
+
+            // Only restart when ALL buffers have reported EOF
+            if buffers_at_eof < kNumberBuffers {
+                return;
+            }
+
+            // All buffers done — reset and refill from start
             env.objc
                 .borrow_mut::<AVAudioPlayerHostObject>(av_audio_player)
                 .current_packet = 0;
-            _touchHLE_AVAudioPlayerOutputBufferHelper(env, in_user_data, in_aq, in_buf);
+            env.objc
+                .borrow_mut::<AVAudioPlayerHostObject>(av_audio_player)
+                .buffers_at_eof = 0;
+
+            let buffers = env.objc.borrow::<AVAudioPlayerHostObject>(av_audio_player).audio_queue_buffers.unwrap();
+            for i in 0..kNumberBuffers {
+                let buf = env.mem.read(buffers + i as u32);
+                _touchHLE_AVAudioPlayerOutputBufferHelper(env, in_user_data, in_aq, buf);
+            }
         }
     }
 }

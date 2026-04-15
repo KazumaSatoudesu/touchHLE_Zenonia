@@ -307,8 +307,18 @@ fn strlcpy(
     GenericChar::<u8>::strlcpy(env, dst, src, size)
 }
 
+fn bcopy(env: &mut Environment, src: ConstVoidPtr, dst: MutVoidPtr, n: GuestUSize) {
+    log_dbg!("bcopy({:?}, {:?}, {})", src, dst, n);
+    if n == 0 {
+        return;
+    }
+    let tmp = env.mem.bytes_at(src.cast(), n).to_vec();
+    env.mem.bytes_at_mut(dst.cast(), n).copy_from_slice(&tmp);
+}
+
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(strtok(_, _)),
+	export_c_func!(bcopy(_, _, _)),
     export_c_func!(bzero(_, _)),
     // Functions shared with wchar.rs
     export_c_func!(memset(_, _, _)),

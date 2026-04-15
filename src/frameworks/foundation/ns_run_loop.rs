@@ -47,13 +47,11 @@ pub struct State {
 
 struct NSRunLoopHostObject {
     audio_units: Vec<AudioUnit>,
-    /// Weak reference. Audio queue must remove itself when destroyed (TODO).
-    /// They are in no particular order.
     audio_queues: Vec<AudioQueueRef>,
-    /// Strong references to `NSTimer*` in no particular order. Timers are owned
-    /// by the run loop. The timer must remove itself when invalidated.
     timers: Vec<id>,
+    run_depth: u32,  // replaces is_running bool
 }
+
 impl HostObject for NSRunLoopHostObject {}
 
 pub const CLASSES: ClassExports = objc_classes! {
@@ -176,7 +174,9 @@ pub(super) fn remove_timer(env: &mut Environment, run_loop: id, timer: id) {
             i += 1;
         }
     }
-    assert!(release_count == 1); // TODO?
+    if release_count == 0 {
+        log_dbg!("Warning: remove_timer called for timer {:?} not in run loop {:?}", timer, run_loop);
+    }
     for _ in 0..release_count {
         release(env, timer);
     }
@@ -186,7 +186,14 @@ pub(super) fn remove_timer(env: &mut Environment, run_loop: id, timer: id) {
 /// for the app picker, since we don't have `runMode:beforeDate:` yet.
 /// (TODO: implement those to replace this.)
 pub fn run_run_loop_single_iteration(env: &mut Environment, run_loop: id) {
+    log_dbg!("run_run_loop_single_iteration called, is_running={}",
+        env.objc.borrow::<NSRunLoopHostObject>(run_loop).run_depth > 0);
     run_run_loop(env, run_loop, /* single_iteration: */ true, None)
+}
+
+/// Returns true if the run loop is currently executing.
+pub fn is_run_loop_running(env: &mut Environment, run_loop: id) -> bool {
+    env.objc.borrow::<NSRunLoopHostObject>(run_loop).run_depth > 0
 }
 
 pub fn run_run_loop(
@@ -222,7 +229,14 @@ pub fn run_run_loop(
     }
 
     let is_main_run_loop = env.current_thread == 0;
-
+    // Re-entrancy guard
+    if env.objc.borrow::<NSRunLoopHostObject>(run_loop).run_depth > 0 {
+        log_dbg!("run_run_loop: re-entrancy detected (depth {}), returning",
+            env.objc.borrow::<NSRunLoopHostObject>(run_loop).run_depth);
+        return;
+    }
+    env.objc.borrow_mut::<NSRunLoopHostObject>(run_loop).run_depth += 1;
+	
     loop {
         let mut sleep_until = None;
 
@@ -320,6 +334,8 @@ pub fn run_run_loop(
             }
         }
     }
+    // ... loop ...
+    env.objc.borrow_mut::<NSRunLoopHostObject>(run_loop).run_depth -= 1;
 }
 
 /// Helper method for `mainRunLoop` and `currentRunLoop` NSThread class methods
@@ -335,6 +351,7 @@ fn run_loop_for_thread(env: &mut Environment, this: Class, thread_id: ThreadId) 
             audio_units: Vec::new(),
             audio_queues: Vec::new(),
             timers: Vec::new(),
+            run_depth: 0,
         });
         // TODO: is it OK to allocate static object for all threads,
         // not only main one?

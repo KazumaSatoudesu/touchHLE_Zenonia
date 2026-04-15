@@ -18,7 +18,7 @@
 //! classes that are both (considering Objective-C's support for inheritance,
 //! categories and dynamic class editing).
 
-use crate::dyld::{export_c_func, ConstantExports, FunctionExports, HostConstant, HostDylib};
+use crate::dyld::{export_c_func, export_c_func_aliased, ConstantExports, FunctionExports, HostConstant, HostDylib};
 use crate::MutexId;
 use std::collections::HashMap;
 
@@ -137,5 +137,6 @@ const FUNCTIONS: FunctionExports = &[
     export_c_func!(objc_sync_enter(_)),
     export_c_func!(objc_sync_exit(_)),
     export_c_func!(sel_registerName(_)),
+	export_c_func_aliased!("sel_getUid", sel_registerName(_)),
     export_c_func!(_Block_object_dispose(_, _)),
 ];

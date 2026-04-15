@@ -178,6 +178,17 @@ pub(super) fn set_run_loop(env: &mut Environment, timer: id, run_loop: id) {
 ///
 /// Returns the next firing time, if any.
 pub(super) fn handle_timer(env: &mut Environment, timer: id) -> Option<Instant> {
+	match env.objc.get_host_object(timer) {
+        None => {
+            log!("handle_timer: timer {:?} already deallocated, skipping", timer);
+            return None;
+        }
+        Some(obj) if obj.type_name() != std::any::type_name::<NSTimerHostObject>() => {
+            log!("handle_timer: timer {:?} is wrong type ({}), skipping", timer, obj.type_name());
+            return None;
+        }
+        _ => {}
+    }
     let &NSTimerHostObject {
         ns_interval,
         rust_interval,

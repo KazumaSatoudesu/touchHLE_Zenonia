@@ -368,6 +368,17 @@ pub const CLASSES: ClassExports = objc_classes! {
     autorelease(env, new)
 }
 
++ (id)stringWithContentsOfURL:(id)url // NSURL *
+                     encoding:(NSStringEncoding)encoding
+                        error:(MutPtr<id>)error { // NSError**
+    let path: id = msg![env; url path];
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithContentsOfFile:path
+                                              encoding:encoding
+                                                 error:error];
+    autorelease(env, new)
+}
+
 + (id)stringWithFormat:(id)format, // NSString*
                        ...args {
     let res = with_format(env, format, args.start());
@@ -1594,6 +1605,18 @@ pub const CLASSES: ClassExports = objc_classes! {
     autorelease(env, res)
 }
 
+- (NSUInteger)replaceOccurrencesOfString:(id)target
+                              withString:(id)replacement
+                                 options:(NSUInteger)options
+                                   range:(NSRange)range {
+    let result: id = msg![env; this stringByReplacingOccurrencesOfString:target withString:replacement options:options range:range];
+    if result != nil {
+        let result_str = to_rust_string(env, result);
+        *env.objc.borrow_mut(this) = StringHostObject::Utf8(result_str.into_owned().into());
+    }
+    0
+}
+
 @end
 
 };
@@ -1735,6 +1758,9 @@ pub fn from_u16_vec(env: &mut Environment, from: Vec<u16>) -> id {
 ///
 /// TODO: Try to avoid converting from UTF-16 in more cases.
 pub fn to_rust_string(env: &mut Environment, string: id) -> Cow<'static, str> {
+    if string == nil {
+        return Cow::Borrowed("");
+    }
     // TODO: handle foreign subclasses of NSString
     env.objc
         .borrow_mut::<StringHostObject>(string)
@@ -2039,9 +2065,12 @@ fn string_by_replacing_occurrences_inner(
     }
 
     let case_insensitive = match options {
-        0 => false, // No options mean literal match
+        0 => false,
         NSCaseInsensitiveSearch => true,
-        _ => unimplemented!(),
+        _ => {
+            log!("stringByReplacingOccurrencesOfString: unhandled options {}, defaulting to literal", options);
+            false
+        }
     };
 
     let mut result: Utf16String = Vec::new();

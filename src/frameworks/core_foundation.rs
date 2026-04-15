@@ -122,3 +122,11 @@ fn CFShow(env: &mut Environment, obj: CFTypeRef) {
 }
 
 const FUNCTIONS: FunctionExports = &[export_c_func!(CFShow(_))];
+
+/// State for Core Foundation framework
+#[derive(Default)]
+pub struct State {
+    /// Address of the currently-executing CFRunLoopTimer callout, or 0 if none.
+    /// Used to prevent re-entrant callout execution.
+    pub active_cf_timer_callout: u32,
+}

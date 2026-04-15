@@ -10,6 +10,7 @@ use crate::frameworks::carbon_core::OSStatus;
 use crate::frameworks::core_audio_types::fourcc;
 use crate::mem::{MutPtr, MutVoidPtr};
 use crate::Environment;
+use crate::objc::id;
 
 /// Usually a FourCC.
 type AudioServicesPropertyID = u32;
@@ -36,12 +37,34 @@ fn AudioServicesGetProperty(
 }
 
 fn AudioServicesPlaySystemSound(_env: &mut Environment, in_system_sound_id: SystemSoundID) {
-    assert_eq!(in_system_sound_id, kSystemSoundID_Vibrate);
-    log!("TODO: vibration (AudioServicesPlaySystemSound)");
-    // TODO: implement other system sounds
+    if in_system_sound_id == kSystemSoundID_Vibrate {
+        log!("TODO: vibration (AudioServicesPlaySystemSound)");
+        return;
+    }
+    // Ignore other system sounds (stubs created by AudioServicesCreateSystemSoundID)
+    log!("TODO: AudioServicesPlaySystemSound({})", in_system_sound_id);
+}
+
+fn AudioServicesCreateSystemSoundID(
+    _env: &mut Environment,
+    _url: id,
+    out_sound_id: MutPtr<u32>,
+) -> i32 {
+    // Stub: write a dummy sound ID and return noErr (0)
+    _env.mem.write(out_sound_id, 1);
+    0
+}
+
+fn AudioServicesDisposeSystemSoundID(
+    _env: &mut Environment,
+    _in_system_sound_id: SystemSoundID,
+) -> OSStatus {
+    0 // noErr
 }
 
 pub const FUNCTIONS: FunctionExports = &[
+    export_c_func!(AudioServicesCreateSystemSoundID(_, _)),
+    export_c_func!(AudioServicesDisposeSystemSoundID(_)),
     export_c_func!(AudioServicesGetProperty(_, _, _, _, _)),
     export_c_func!(AudioServicesPlaySystemSound(_)),
 ];

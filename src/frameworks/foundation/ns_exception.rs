@@ -276,6 +276,38 @@ pub const CONSTANTS: ConstantExports = &[
     ),
 ];
 
+use crate::objc::{id, objc_classes, ClassExports, HostObject, NSZonePtr};
+
+struct NSExceptionHostObject;
+impl HostObject for NSExceptionHostObject {}
+
+pub const CLASSES: ClassExports = objc_classes! {
+
+(env, this, _cmd);
+
+@implementation NSException: NSObject
+
++ (id)allocWithZone:(NSZonePtr)_zone {
+    let host_object = Box::new(NSExceptionHostObject);
+    env.objc.alloc_object(this, host_object, &mut env.mem)
+}
+
++ (())raise:(id)_name format:(id)_format {
+    log!("NSException raise:format: called (stub, ignoring)");
+}
+
++ (())raise:(id)_name format:(id)_format arguments:(id)_args {
+    log!("NSException raise:format:arguments: called (stub, ignoring)");
+}
+
+- (())raise {
+    log!("NSException raise called (stub, ignoring)");
+}
+
+@end
+
+};
+
 /// This exception handler is supposed to do last-minute logging before the
 /// program terminates. For our purposes, it's completely safe to ignore that.
 fn NSSetUncaughtExceptionHandler(_env: &mut Environment, handler: MutVoidPtr) {

@@ -41,7 +41,11 @@ fn CFRunLoopRunInMode(
     );
     let current_run_loop = CFRunLoopGetCurrent(env);
     if seconds == 0.0 {
-        run_run_loop_single_iteration(env, current_run_loop);
+        if !crate::frameworks::foundation::ns_run_loop::is_run_loop_running(env, current_run_loop) {
+            run_run_loop_single_iteration(env, current_run_loop);
+        } else {
+            log_dbg!("CFRunLoopRunInMode: skipping single iteration, run loop already running");
+        }
     } else {
         let limit_date: id = msg_class![env; NSDate dateWithTimeIntervalSinceNow:seconds];
         () = msg![env; current_run_loop runUntilDate:limit_date];

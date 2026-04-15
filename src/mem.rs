@@ -337,9 +337,9 @@ impl Mem {
     // the performance characteristics of this hasn't been profiled, but it
     // seems like a good idea to help the compiler optimise for the fast path
     #[cold]
-    fn null_check_fail(at: VAddr, size: GuestUSize) {
-        panic!("Attempted null-page access at {at:#x} ({size:#x} bytes)")
-    }
+	fn null_check_fail(at: VAddr, size: GuestUSize) {
+    panic!("Attempted null-page access at {at:#x} ({size:#x} bytes)\nHint: a host function likely returned nil/null to the game. Check logs above for the last host function call.");
+}
 
     /// Special version of [Self::bytes_at] that returns [None] rather than
     /// panicking on failure. Only for use by [crate::gdb::GdbServer].
